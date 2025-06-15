@@ -12,7 +12,9 @@ name = "test-data-generator"
 path = "src/test-data-generator.rs"
 
 [dependencies]
-chrono = "0.4.41"
+chrono = { version = "0.4.41", features = ["alloc"] }
 diesel = { version = "2.2.0", features = ["postgres", "serde_json", "chrono"] }
 dotenvy = "0.15"
+hex = "0.4.3"
+rand = "0.9.1"
 serde_json = "1.0.140"
