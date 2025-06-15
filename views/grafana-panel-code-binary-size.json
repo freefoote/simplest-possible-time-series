@@ -1,0 +1,177 @@
+{
+    "id": 2,
+    "type": "timeseries",
+    "title": "Binary Size",
+    "gridPos": {
+        "x": 0,
+        "y": 8,
+        "h": 8,
+        "w": 12
+    },
+    "fieldConfig": {
+        "defaults": {
+            "custom": {
+                "drawStyle": "line",
+                "lineInterpolation": "linear",
+                "barAlignment": 0,
+                "barWidthFactor": 0.6,
+                "lineWidth": 1,
+                "fillOpacity": 0,
+                "gradientMode": "none",
+                "spanNulls": false,
+                "insertNulls": false,
+                "showPoints": "auto",
+                "pointSize": 5,
+                "stacking": {
+                    "mode": "none",
+                    "group": "A"
+                },
+                "axisPlacement": "auto",
+                "axisLabel": "",
+                "axisColorMode": "text",
+                "axisBorderShow": false,
+                "scaleDistribution": {
+                    "type": "linear"
+                },
+                "axisCenteredZero": false,
+                "hideFrom": {
+                    "tooltip": false,
+                    "viz": false,
+                    "legend": false
+                },
+                "thresholdsStyle": {
+                    "mode": "off"
+                }
+            },
+            "color": {
+                "mode": "palette-classic"
+            },
+            "mappings": [],
+            "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                    {
+                        "color": "green",
+                        "value": null
+                    },
+                    {
+                        "color": "red",
+                        "value": 80
+                    }
+                ]
+            },
+            "unit": "decbytes"
+        },
+        "overrides": [
+            {
+                "matcher": {
+                    "id": "byName",
+                    "options": "date"
+                },
+                "properties": []
+            },
+            {
+                "matcher": {
+                    "id": "byName",
+                    "options": "binary_size_bytes"
+                },
+                "properties": [
+                    {
+                        "id": "color",
+                        "value": {
+                            "mode": "fixed",
+                            "fixedColor": "red"
+                        }
+                    }
+                ]
+            }
+        ]
+    },
+    "pluginVersion": "12.0.1",
+    "targets": [
+        {
+            "datasource": {
+                "type": "grafana-postgresql-datasource",
+                "uid": "feozs0nzcjcw0d"
+            },
+            "editorMode": "builder",
+            "format": "table",
+            "rawSql": "SELECT binary_size_bytes, relevant_time FROM tsdata_code_binary_sizes LIMIT null ",
+            "refId": "A",
+            "sql": {
+                "columns": [
+                    {
+                        "parameters": [
+                            {
+                                "name": "binary_size_bytes",
+                                "type": "functionParameter"
+                            }
+                        ],
+                        "type": "function"
+                    },
+                    {
+                        "parameters": [
+                            {
+                                "name": "relevant_time",
+                                "type": "functionParameter"
+                            }
+                        ],
+                        "type": "function"
+                    }
+                ],
+                "groupBy": [
+                    {
+                        "property": {
+                            "type": "string"
+                        },
+                        "type": "groupBy"
+                    }
+                ],
+                "limit": null,
+                "whereJsonTree": {
+                    "children1": [
+                        {
+                            "id": "ab99aaab-89ab-4cde-b012-319771adf50a",
+                            "properties": {
+                                "field": "relevant_time",
+                                "fieldSrc": "field",
+                                "operator": "equal",
+                                "value": [
+                                    null
+                                ],
+                                "valueSrc": [
+                                    "value"
+                                ],
+                                "valueType": [
+                                    "number"
+                                ]
+                            },
+                            "type": "rule"
+                        }
+                    ],
+                    "id": "8a9abb8b-0123-4456-b89a-b197718ffa21",
+                    "type": "group"
+                }
+            },
+            "table": "tsdata_code_binary_sizes"
+        }
+    ],
+    "maxDataPoints": 5000,
+    "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "feozs0nzcjcw0d"
+    },
+    "options": {
+        "tooltip": {
+            "mode": "single",
+            "sort": "none",
+            "hideZeros": false
+        },
+        "legend": {
+            "showLegend": true,
+            "displayMode": "list",
+            "placement": "bottom",
+            "calcs": []
+        }
+    }
+}
