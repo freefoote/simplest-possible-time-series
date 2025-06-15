@@ -1,0 +1,16 @@
+[package]
+name = "simplest-possible-time-series"
+version = "0.1.0"
+edition = "2024"
+
+[[bin]]
+name = "receiver"
+path = "src/receiver.rs"
+
+[[bin]]
+name = "test-data-generator"
+path = "src/test-data-generator.rs"
+
+[dependencies]
+diesel = { version = "2.2.0", features = ["postgres"] }
+dotenvy = "0.15"

@@ -1,0 +1,18 @@
+services:
+  postgres:
+    # I chose v13 because that matches my initial deployment version;
+    # but feel free to actually use a much more recent version.
+    image: postgres:13
+    restart: always
+    shm_size: 128mb
+    volumes:
+      - postgres:/var/lib/postgresql
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_PASSWORD: test
+      POSTGRES_USER: test
+      POSTGRES_DB: test
+
+volumes:
+  postgres: {}
