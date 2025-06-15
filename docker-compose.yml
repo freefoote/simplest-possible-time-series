@@ -3,7 +3,6 @@ services:
     # I chose v13 because that matches my initial deployment version;
     # but feel free to actually use a much more recent version.
     image: postgres:13
-    restart: always
     shm_size: 128mb
     volumes:
       - postgres:/var/lib/postgresql
@@ -13,6 +12,13 @@ services:
       POSTGRES_PASSWORD: test
       POSTGRES_USER: test
       POSTGRES_DB: test
+  grafana:
+    image: grafana/grafana-oss
+    ports:
+     - '3000:3000'
+    environment:
+      GF_DATABASE_TYPE: postgres
+      GF_DATABASE_URL: postgres://test:test@postgres:5432/test
 
 volumes:
   postgres: {}
