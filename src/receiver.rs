@@ -50,7 +50,7 @@ struct SeriesInsertData {
 #[serde(crate = "rocket::serde")]
 struct InsertResponse {
     status: String,
-    id: u64,
+    id: i32,
 }
 
 #[post("/insert", data = "<body>")]
@@ -66,17 +66,17 @@ async fn insert_data(
     };
 
     let mut pooled = state.db_pool.get().expect("Failed to get connection.");
-    let result = pooled.transaction(|conn| {
-        diesel::insert_into(schema::tsdata::table)
-            .values(&new_entry)
-            .execute(conn)
-    });
-
-    print!("Result: {:?}", result);
+    let result = pooled
+        .transaction(|conn| {
+            diesel::insert_into(schema::tsdata::table)
+                .values(&new_entry)
+                .get_result::<models::TsData>(conn)
+        })
+        .unwrap();
 
     let response = InsertResponse {
         status: "success".to_string(),
-        id: 12345,
+        id: result.id,
     };
 
     Json(response)
