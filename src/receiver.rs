@@ -10,9 +10,10 @@ use diesel::{
 };
 use diesel::{prelude::*, r2d2};
 use dotenvy::dotenv;
-use rocket::State;
+use rocket::{State, http::Status, Request, catch, catchers, response::Responder, Response};
 use rocket::serde::{Deserialize, Serialize, json::Json};
 use serde_json::Value;
+use std::io::Cursor;
 
 mod models;
 mod schema;
@@ -20,33 +21,31 @@ mod schema;
 /*
 Test With (date is optional - will default to current time if not provided):
 
-With date:
+Successful request:
 curl -X POST -H "Content-Type: application/json" -d '{
   "series": "abc_123",
   "date": "2024-01-15T10:30:00Z",
-  "data": {
-    "commit": "12345678",
-    "lines_of_code": 100,
-    "binary_size_bytes": 100,
-    "test_coverage_percent": 45.12
-  }
+  "data": {"test": "data"}
 }' http://localhost:8000/insert
 
-Without date (uses current time):
+Test constraint violation (returns actual database error message):
 curl -X POST -H "Content-Type: application/json" -d '{
-  "series": "ABC_123",
-  "data": {
-    "commit": "12345678",
-    "lines_of_code": 100,
-    "binary_size_bytes": 100,
-    "test_coverage_percent": 45.12
-  }
+  "series": "invalid-format",
+  "data": {"test": "data"}
 }' http://localhost:8000/insert
+
+Test 404 (returns JSON error):
+curl -X POST -H "Content-Type: application/json" -d '{}' http://localhost:8000/nonexistent
 
 Supported date formats:
 - ISO 8601/RFC3339: "2024-01-15T10:30:00Z"
 - Simple datetime: "2024-01-15 10:30:00"
 - Date only: "2024-01-15" (defaults to midnight UTC)
+
+All errors now return JSON with actual error messages:
+Success: {"status": "success", "id": 123}
+Database constraint: {"status": "error", "error": "new row for relation \"tsdata\" violates check constraint \"series_format_check\""}
+404: {"status": "error", "error": "Not found"}
 */
 
 // Thanks to https://stackoverflow.com/questions/68633531/imlementing-connection-pooling-in-a-rust-diesel-app-with-r2d2 for a working solution.
@@ -57,6 +56,7 @@ pub struct ServerState {
 }
 
 // Custom date serializer/deserializer to handle multiple formats
+// (Courtesy of LLM, Claude Sonnet 4.)
 mod date_format {
     use chrono::{DateTime, Utc, NaiveDateTime};
     use serde::{self, Deserialize, Deserializer, Serializer};
@@ -114,11 +114,57 @@ struct InsertResponse {
     id: i32,
 }
 
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(crate = "rocket::serde")]
+struct ErrorResponse {
+    status: String,
+    error: String,
+}
+
+// Custom error type that carries the actual error message
+// (Courtesy of LLM, Claude Sonnet 4.)
+#[derive(Debug)]
+struct ApiError {
+    status: Status,
+    message: String,
+}
+
+impl ApiError {
+    fn new(status: Status, message: String) -> Self {
+        Self { status, message }
+    }
+}
+
+impl<'r> Responder<'r, 'static> for ApiError {
+    fn respond_to(self, _: &'r Request<'_>) -> rocket::response::Result<'static> {
+        let error_response = ErrorResponse {
+            status: "error".to_string(),
+            error: self.message,
+        };
+
+        let json_string = serde_json::to_string(&error_response).unwrap();
+
+        Response::build()
+            .status(self.status)
+            .header(rocket::http::ContentType::JSON)
+            .sized_body(json_string.len(), Cursor::new(json_string))
+            .ok()
+    }
+}
+
+#[catch(default)]
+fn default_catcher(status: Status, _req: &Request) -> Json<ErrorResponse> {
+    Json(ErrorResponse {
+        status: "error".to_string(),
+        error: format!("Error {}: {}", status.code, status.reason().unwrap_or("Unknown error")),
+    })
+}
+
 #[post("/insert", data = "<body>")]
 async fn insert_data(
     state: &State<ServerState>,
     body: Json<SeriesInsertData>,
-) -> Json<InsertResponse> {
+) -> Result<Json<InsertResponse>, ApiError> {
     debug!("Received JSON: {:?}", body);
 
     let new_entry = models::NewTsData {
@@ -127,21 +173,30 @@ async fn insert_data(
         contents: &body.data,
     };
 
-    let mut pooled = state.db_pool.get().expect("Failed to get connection.");
-    let result = pooled
-        .transaction(|conn| {
-            diesel::insert_into(schema::tsdata::table)
-                .values(&new_entry)
-                .get_result::<models::TsData>(conn)
-        })
-        .unwrap();
+    let mut pooled = state.db_pool.get()
+        .map_err(|e| ApiError::new(Status::InternalServerError, format!("Database connection failed: {}", e)))?;
+
+    let result = pooled.transaction(|conn| {
+        diesel::insert_into(schema::tsdata::table)
+            .values(&new_entry)
+            .get_result::<models::TsData>(conn)
+    }).map_err(|e| {
+        // Extract the actual database error message
+        let error_msg = match e {
+            diesel::result::Error::DatabaseError(_, info) => {
+                info.message().to_string()
+            }
+            _ => format!("Database error: {}", e)
+        };
+        ApiError::new(Status::BadRequest, error_msg)
+    })?;
 
     let response = InsertResponse {
         status: "success".to_string(),
         id: result.id,
     };
 
-    Json(response)
+    Ok(Json(response))
 }
 
 pub fn establish_pooled_connection() -> Pool<ConnectionManager<PgConnection>> {
@@ -167,4 +222,5 @@ fn rocket() -> _ {
     rocket::build()
         .manage(ServerState { db_pool })
         .mount("/", routes![insert_data])
+        .register("/", catchers![default_catcher])
 }
