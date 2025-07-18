@@ -15,6 +15,7 @@ use rocket::serde::{Deserialize, Serialize, json::Json};
 use serde_json::Value;
 use std::io::Cursor;
 
+mod helpers;
 mod models;
 mod schema;
 
@@ -177,9 +178,15 @@ async fn insert_data(
         .map_err(|e| ApiError::new(Status::InternalServerError, format!("Database connection failed: {}", e)))?;
 
     let result = pooled.transaction(|conn| {
-        diesel::insert_into(schema::tsdata::table)
+        // Insert the data
+        let inserted_data = diesel::insert_into(schema::tsdata::table)
             .values(&new_entry)
-            .get_result::<models::TsData>(conn)
+            .get_result::<models::TsData>(conn)?;
+
+        // Create or replace the view for this series
+        helpers::create_series_view(conn, &body.series)?;
+
+        Ok(inserted_data)
     }).map_err(|e| {
         // Extract the actual database error message
         let error_msg = match e {

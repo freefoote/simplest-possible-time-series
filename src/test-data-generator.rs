@@ -86,10 +86,15 @@ fn series_commit_code_sizes(connection: &mut PgConnection, number_of_entries: u3
         println!("Inserted {} of {} rows for {}...", total_inserted, number_of_entries, series_name);
     }
 
+    // Create or replace the view for this series after all data is inserted
+    helpers::create_series_view(connection, series_name)
+        .expect("Error creating view for series");
+
     println!(
         "Completed inserting {} rows for {}.",
         number_of_entries, series_name
     );
+    println!("Created view tsdata_{} for the series.", series_name);
 }
 
 fn main() {
