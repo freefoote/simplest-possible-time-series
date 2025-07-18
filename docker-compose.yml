@@ -18,7 +18,7 @@ services:
      - '3000:3000'
     environment:
       GF_DATABASE_TYPE: postgres
-      GF_DATABASE_URL: postgres://test:test@postgres:5432/test
+      GF_DATABASE_URL: postgres://test:test@postgres:5432/grafana
 
 volumes:
   postgres: {}
