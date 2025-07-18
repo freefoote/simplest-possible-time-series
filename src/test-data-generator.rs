@@ -34,40 +34,56 @@ fn series_commit_code_sizes(connection: &mut PgConnection, number_of_entries: u3
     let mut loc = 1000;
     let mut bsize = 5_000_000;
     let mut test_coverage = 30.0;
-    for quantity in 0..number_of_entries {
-        // Adjust the values in the random range.
-        loc += rng.random_range(-100..200);
-        bsize += rng.random_range(-20_000..40_000);
-        test_coverage += rng.random_range(-1.0..2.0);
 
-        let example_contents = json!({
-            "commit": generate_random_looking_git_commit_hash(),
-            "lines_of_code": loc,
-            "binary_size_bytes": bsize,
-            "test_coverage_percent": test_coverage,
-        });
+    // Process in batches for memory efficiency
+    const BATCH_SIZE: usize = 500;
+    let mut total_inserted = 0;
 
-        // Advance time backwards a little bit (yes, we insert in reverse here)
-        working_time = working_time
-            .checked_sub_signed(TimeDelta::hours(1))
-            .expect("Failed to adjust timestamp.");
+    while total_inserted < number_of_entries {
+        let batch_size = std::cmp::min(BATCH_SIZE, (number_of_entries - total_inserted) as usize);
+        let mut data_points = Vec::with_capacity(batch_size);
 
-        let new_entry = models::NewTsData {
-            data_time: working_time.into(), // DateTime<Local> -> DateTime<Utc>
-            series_name: series_name,
-            contents: &example_contents,
-        };
+        // Collect data for this batch
+        for _ in 0..batch_size {
+            // Adjust the values in the random range.
+            loc += rng.random_range(-100..200);
+            bsize += rng.random_range(-20_000..40_000);
+            test_coverage += rng.random_range(-1.0..2.0);
 
-        // TODO: Do a bulk insert of some kind for performance?
-        diesel::insert_into(schema::tsdata::table)
-            .values(&new_entry)
-            .execute(connection)
-            .expect("Error saving new entry.");
+            let example_contents = json!({
+                "commit": generate_random_looking_git_commit_hash(),
+                "lines_of_code": loc,
+                "binary_size_bytes": bsize,
+                "test_coverage_percent": test_coverage,
+            });
 
-        // Calculate progress.
-        if quantity % 500 == 0 {
-            println!("Inserted {} rows for {}...", quantity + 1, series_name);
+            // Advance time backwards a little bit (yes, we insert in reverse here)
+            working_time = working_time
+                .checked_sub_signed(TimeDelta::hours(1))
+                .expect("Failed to adjust timestamp.");
+
+            // Store the data for this batch
+            data_points.push((working_time.into(), example_contents));
         }
+
+        // Create the entries vector with references to the stored data
+        let entries: Vec<models::NewTsData> = data_points
+            .iter()
+            .map(|(data_time, contents)| models::NewTsData {
+                data_time: *data_time,
+                series_name: series_name,
+                contents: contents,
+            })
+            .collect();
+
+        // Perform bulk insert for this batch
+        diesel::insert_into(schema::tsdata::table)
+            .values(&entries)
+            .execute(connection)
+            .expect("Error saving batch entries.");
+
+        total_inserted += batch_size as u32;
+        println!("Inserted {} of {} rows for {}...", total_inserted, number_of_entries, series_name);
     }
 
     println!(
