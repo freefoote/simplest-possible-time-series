@@ -45,7 +45,6 @@ fn series_commit_code_sizes(connection: &mut PgConnection, number_of_entries: u3
             "lines_of_code": loc,
             "binary_size_bytes": bsize,
             "test_coverage_percent": test_coverage,
-            "date": working_time.to_rfc3339()
         });
 
         // Advance time backwards a little bit (yes, we insert in reverse here)
@@ -54,6 +53,7 @@ fn series_commit_code_sizes(connection: &mut PgConnection, number_of_entries: u3
             .expect("Failed to adjust timestamp.");
 
         let new_entry = models::NewTsData {
+            data_time: working_time.into(), // DateTime<Local> -> DateTime<Utc>
             series_name: series_name,
             contents: &example_contents,
         };

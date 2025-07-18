@@ -3,6 +3,7 @@ extern crate rocket;
 
 use std::env;
 
+use chrono::{DateTime, Utc};
 use diesel::{
     PgConnection,
     r2d2::{ConnectionManager, Pool},
@@ -17,18 +18,35 @@ mod models;
 mod schema;
 
 /*
-Test With:
+Test With (date is optional - will default to current time if not provided):
+
+With date:
 curl -X POST -H "Content-Type: application/json" -d '{
-  "series": "abc-123",
+  "series": "abc_123",
+  "date": "2024-01-15T10:30:00Z",
   "data": {
-    "name": "Custom Widget",
-    "version": "1.0",
-    "settings": {
-      "color": "blue",
-      "size": "medium"
-    }
+    "commit": "12345678",
+    "lines_of_code": 100,
+    "binary_size_bytes": 100,
+    "test_coverage_percent": 45.12
   }
 }' http://localhost:8000/insert
+
+Without date (uses current time):
+curl -X POST -H "Content-Type: application/json" -d '{
+  "series": "ABC_123",
+  "data": {
+    "commit": "12345678",
+    "lines_of_code": 100,
+    "binary_size_bytes": 100,
+    "test_coverage_percent": 45.12
+  }
+}' http://localhost:8000/insert
+
+Supported date formats:
+- ISO 8601/RFC3339: "2024-01-15T10:30:00Z"
+- Simple datetime: "2024-01-15 10:30:00"
+- Date only: "2024-01-15" (defaults to midnight UTC)
 */
 
 // Thanks to https://stackoverflow.com/questions/68633531/imlementing-connection-pooling-in-a-rust-diesel-app-with-r2d2 for a working solution.
@@ -38,12 +56,55 @@ pub struct ServerState {
     pub db_pool: DbPool,
 }
 
+// Custom date serializer/deserializer to handle multiple formats
+mod date_format {
+    use chrono::{DateTime, Utc, NaiveDateTime};
+    use serde::{self, Deserialize, Deserializer, Serializer};
+
+    pub fn serialize<S>(date: &DateTime<Utc>, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        let s = date.to_rfc3339();
+        serializer.serialize_str(&s)
+    }
+
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<DateTime<Utc>, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let s = String::deserialize(deserializer)?;
+
+        // Try parsing as RFC3339 first (ISO 8601)
+        if let Ok(dt) = DateTime::parse_from_rfc3339(&s) {
+            return Ok(dt.with_timezone(&Utc));
+        }
+
+        // Try parsing as naive datetime and assume UTC
+        if let Ok(naive) = NaiveDateTime::parse_from_str(&s, "%Y-%m-%d %H:%M:%S") {
+            return Ok(DateTime::from_naive_utc_and_offset(naive, Utc));
+        }
+
+        // Try parsing date only and set time to midnight UTC
+        if let Ok(date) = chrono::NaiveDate::parse_from_str(&s, "%Y-%m-%d") {
+            let naive = date.and_hms_opt(0, 0, 0).unwrap();
+            return Ok(DateTime::from_naive_utc_and_offset(naive, Utc));
+        }
+
+        Err(serde::de::Error::custom("Invalid date format"))
+    }
+}
+
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(crate = "rocket::serde")]
 struct SeriesInsertData {
     series: String,
     #[serde(rename = "data")]
     data: Value,
+    // Optional date field that defaults to current time if not provided
+    #[serde(default = "chrono::Utc::now")]
+    #[serde(with = "date_format")]
+    date: DateTime<Utc>,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -61,6 +122,7 @@ async fn insert_data(
     debug!("Received JSON: {:?}", body);
 
     let new_entry = models::NewTsData {
+        data_time: body.date,
         series_name: &body.series,
         contents: &body.data,
     };

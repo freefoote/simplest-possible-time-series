@@ -10,6 +10,7 @@ use serde_json;
 pub struct TsData {
     pub id: i32,
     pub inserted_time: DateTime<Utc>,
+    pub data_time: DateTime<Utc>,
     pub series_name: String,
     pub contents: serde_json::Value,
 }
@@ -17,6 +18,7 @@ pub struct TsData {
 #[derive(Insertable)]
 #[diesel(table_name = tsdata)]
 pub struct NewTsData<'a> {
+    pub data_time: DateTime<Utc>,
     pub series_name: &'a str,
     pub contents: &'a serde_json::Value,
 }
