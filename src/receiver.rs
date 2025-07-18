@@ -2,6 +2,7 @@
 extern crate rocket;
 
 use std::env;
+use std::collections::HashSet;
 
 use chrono::{DateTime, Utc};
 use diesel::{
@@ -22,12 +23,28 @@ mod schema;
 /*
 Test With (date is optional - will default to current time if not provided):
 
-Successful request:
+Single insert - Successful request:
 curl -X POST -H "Content-Type: application/json" -d '{
   "series": "abc_123",
   "date": "2024-01-15T10:30:00Z",
   "data": {"test": "data"}
 }' http://localhost:8000/insert
+
+Batch insert - Successful request (max 100 data points):
+curl -X POST -H "Content-Type: application/json" -d '{
+  "data_points": [
+    {
+      "series": "abc_123",
+      "date": "2024-01-15T10:30:00Z",
+      "data": {"test": "data1"}
+    },
+    {
+      "series": "abc_123",
+      "date": "2024-01-15T11:30:00Z",
+      "data": {"test": "data2"}
+    }
+  ]
+}' http://localhost:8000/insert_batch
 
 Test constraint violation (returns actual database error message):
 curl -X POST -H "Content-Type: application/json" -d '{
@@ -44,8 +61,10 @@ Supported date formats:
 - Date only: "2024-01-15" (defaults to midnight UTC)
 
 All errors now return JSON with actual error messages:
-Success: {"status": "success", "id": 123}
+Single insert success: {"status": "success", "id": 123}
+Batch insert success: {"status": "success", "inserted_count": 2, "ids": [123, 124]}
 Database constraint: {"status": "error", "error": "new row for relation \"tsdata\" violates check constraint \"series_format_check\""}
+Batch size error: {"status": "error", "error": "Batch size cannot exceed 100 data points"}
 404: {"status": "error", "error": "Not found"}
 */
 
@@ -110,9 +129,23 @@ struct SeriesInsertData {
 
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(crate = "rocket::serde")]
+struct BatchInsertData {
+    data_points: Vec<SeriesInsertData>,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(crate = "rocket::serde")]
 struct InsertResponse {
     status: String,
     id: i32,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(crate = "rocket::serde")]
+struct BatchInsertResponse {
+    status: String,
+    inserted_count: usize,
+    ids: Vec<i32>,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -206,6 +239,72 @@ async fn insert_data(
     Ok(Json(response))
 }
 
+#[post("/insert_batch", data = "<body>")]
+async fn insert_batch_data(
+    state: &State<ServerState>,
+    body: Json<BatchInsertData>,
+) -> Result<Json<BatchInsertResponse>, ApiError> {
+    debug!("Received batch JSON: {:?}", body);
+
+    // Validate batch size
+    if body.data_points.is_empty() {
+        return Err(ApiError::new(Status::BadRequest, "Batch cannot be empty".to_string()));
+    }
+
+    if body.data_points.len() > 100 {
+        return Err(ApiError::new(Status::BadRequest, "Batch size cannot exceed 100 data points".to_string()));
+    }
+
+    let mut pooled = state.db_pool.get()
+        .map_err(|e| ApiError::new(Status::InternalServerError, format!("Database connection failed: {}", e)))?;
+
+    let result = pooled.transaction(|conn| {
+        // Prepare data for bulk insert
+        let entries: Vec<models::NewTsData> = body.data_points
+            .iter()
+            .map(|data_point| models::NewTsData {
+                data_time: data_point.date,
+                series_name: &data_point.series,
+                contents: &data_point.data,
+            })
+            .collect();
+
+        // Perform bulk insert
+        let inserted_data: Vec<models::TsData> = diesel::insert_into(schema::tsdata::table)
+            .values(&entries)
+            .get_results(conn)?;
+
+        // Create or replace views for all unique series in this batch
+        let unique_series: HashSet<&String> = body.data_points
+            .iter()
+            .map(|dp| &dp.series)
+            .collect();
+
+        for series_name in unique_series {
+            helpers::create_series_view(conn, series_name)?;
+        }
+
+        Ok(inserted_data)
+    }).map_err(|e| {
+        // Extract the actual database error message
+        let error_msg = match e {
+            diesel::result::Error::DatabaseError(_, info) => {
+                info.message().to_string()
+            }
+            _ => format!("Database error: {}", e)
+        };
+        ApiError::new(Status::BadRequest, error_msg)
+    })?;
+
+    let response = BatchInsertResponse {
+        status: "success".to_string(),
+        inserted_count: result.len(),
+        ids: result.iter().map(|r| r.id).collect(),
+    };
+
+    Ok(Json(response))
+}
+
 pub fn establish_pooled_connection() -> Pool<ConnectionManager<PgConnection>> {
     dotenv().ok();
 
@@ -228,6 +327,6 @@ fn rocket() -> _ {
 
     rocket::build()
         .manage(ServerState { db_pool })
-        .mount("/", routes![insert_data])
+        .mount("/", routes![insert_data, insert_batch_data])
         .register("/", catchers![default_catcher])
 }
